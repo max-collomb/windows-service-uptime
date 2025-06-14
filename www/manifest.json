@@ -1,0 +1,18 @@
+{
+	"name":"colors.uptimemonitor",
+	"short_name":"Uptime",
+	"icons":[
+		{
+		    "purpose": "maskable",
+		    "sizes": "192x192",
+		    "src": "maskable_icon.png",
+		    "type": "image/png"
+		}
+	],
+	"theme_color":"#ffffff",
+	"background_color":"#ffffff",
+	"start_url": "/uptime-monitor/",
+	"display_override": ["fullscreen", "minimal-ui"],
+	"display":"standalone",
+	"orientation":"portrait"
+}

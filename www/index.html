@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="manifest" href="/uptime-monitor/manifest.json" />
+    <title>Moniteur de temps d'activité</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .d-none {
+            display: none!important;
+        }
+
+        .day-header {
+            font-weight: 600;
+            font-size: 14px;
+            fill: #495057;
+        }
+
+        .day-header-line {
+            stroke: #dee2e6;
+            stroke-width: 1;
+        }
+
+        .time-axis text {
+            font-size: 10px;
+            fill: #6c757d;
+        }
+        
+        .time-axis line {
+            stroke: #dee2e6;
+            stroke-width: 1;
+        }
+        
+        .host-line {
+            stroke-width: 4;
+            stroke-linecap: round;
+        }
+        
+        .anomaly {
+            fill: #dc3545;
+            stroke: #fff;
+            stroke-width: 1;
+        }
+        
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        #legend {
+            margin-left: 10px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 20px;
+            margin-bottom: 10px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 4px;
+            border-radius: 2px;
+            margin-right: 8px;
+        }
+        
+        .navigation-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .date-range {
+            font-weight: 500;
+            color: #495057;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        
+        .error {
+            text-align: center;
+            padding: 40px;
+            color: #dc3545;
+        }
+        
+        @media (max-width: 768px) {
+            .legend-item {
+                margin-right: 15px;
+                font-size: 14px;
+            }
+            
+        }
+    </style>
+</head>
+<body>
+    <div class="navigation-controls">
+        <button id="prevWeek" class="btn btn-outline-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-chevron-left" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0"/>
+            </svg>
+        </button>
+        <div class="date-range" id="dateRange"></div>
+        <button id="nextWeek" class="btn btn-outline-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-chevron-right" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708"/>
+            </svg>
+        </button>
+    </div>
+                        
+    <!-- Zone de chargement -->
+    <div id="loading" class="loading">
+        Chargement des données...
+    </div>
+                        
+    <!-- Zone d'erreur -->
+    <div id="error" class="error d-none">
+        <p>Erreur lors du chargement des données</p>
+        <button id="retry" class="btn btn-outline-danger">Réessayer</button>
+    </div>
+                        
+    <!-- Légende -->
+    <div id="legend" class="d-none"></div>
+    
+    <!-- Graphique -->
+    <div id="timeline" class="timeline-container"></div>
+    
+    <!-- Tooltip -->
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        class UptimeMonitor {
+            constructor() {
+                this.currentDate = new Date();
+                this.hosts = new Map();
+                this.colors = d3.scaleOrdinal(d3.schemeCategory10);
+                this.tooltip = d3.select('#tooltip');
+                this.svg = null;
+                this.width = 0;
+                this.height = 0;
+                this.margin = { top: 60, right: 20, bottom: 40, left: 20 };
+                
+                this.initializeUI();
+                this.loadData();
+            }
+            
+            initializeUI() {
+                document.getElementById('prevWeek').addEventListener('click', () => {
+                    this.currentDate.setDate(this.currentDate.getDate() - 7);
+                    this.loadData();
+                });
+                
+                document.getElementById('nextWeek').addEventListener('click', () => {
+                    this.currentDate.setDate(this.currentDate.getDate() + 7);
+                    this.loadData();
+                });
+                
+                document.getElementById('retry').addEventListener('click', () => {
+                    this.loadData();
+                });
+                
+                window.addEventListener('resize', () => {
+                    if (this.svg) {
+                        this.renderTimeline();
+                    }
+                });
+            }
+            
+            formatDate(date) {
+                return date.toISOString().split('T')[0];
+            }
+            
+            formatDateTime(date, time = '05:00:00') {
+                return date.toISOString().split('T')[0] + ' ' + time;
+            }
+            
+            updateDateRange() {
+                const endDate = new Date(this.currentDate);
+                const startDate = new Date(this.currentDate);
+                startDate.setDate(startDate.getDate() - 7);
+                
+                const startStr = startDate.toLocaleDateString('fr-FR');
+                const endStr = endDate.toLocaleDateString('fr-FR');
+                
+                document.getElementById('dateRange').textContent = `${startStr} - ${endStr}`;
+            }
+            
+            async loadData() {
+                this.showLoading();
+                
+                const endDate = new Date(this.currentDate);
+                endDate.setDate(endDate.getDate() + 1); // lendemain 5h00
+                const startDate = new Date(this.currentDate);
+                startDate.setDate(startDate.getDate() - 7);
+                
+                const fromParam = this.formatDateTime(startDate);
+                const toParam = this.formatDateTime(endDate);
+                
+                const url = `https://www.colors.ovh/uptime-monitor/fetch.php?from=${fromParam}&to=${toParam}`;
+                
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    this.processData(data);
+                    this.updateDateRange();
+                    this.renderTimeline();
+                    this.showTimeline();
+                } catch (error) {
+                    console.error('Erreur lors du chargement:', error);
+                    this.showError();
+                }
+            }
+            
+            processData(events) {
+                this.hosts.clear();
+                this.minHour = 24;
+                this.maxHour = 0;
+                
+                // Grouper les événements par host et par "jour" (de 5h à 5h)
+                events.forEach(event => {
+                    const [dateStr, timeStr] = event.at.split(' ');
+                    const eventDate = new Date(dateStr + 'T' + timeStr);
+                    const hour = eventDate.getHours() + eventDate.getMinutes() / 60;
+                    
+                    // Déterminer le "jour logique" (de 5h à 5h)
+                    let logicalDate = new Date(eventDate);
+                    if (hour < 5) {
+                        logicalDate.setDate(logicalDate.getDate() - 1);
+                    }
+                    const logicalDateStr = logicalDate.toISOString().split('T')[0];
+                    
+                    // Calculer les heures min/max (en tenant compte du cycle 5h-5h)
+                    let displayHour = hour;
+                    if (hour < 5) displayHour += 24; // Les heures 0-4 deviennent 24-28
+                    
+                    this.minHour = Math.min(this.minHour, displayHour);
+                    this.maxHour = Math.max(this.maxHour, displayHour + 1);
+                    
+                    if (!this.hosts.has(event.host)) {
+                        this.hosts.set(event.host, new Map());
+                    }
+                    
+                    if (!this.hosts.get(event.host).has(logicalDateStr)) {
+                        this.hosts.get(event.host).set(logicalDateStr, []);
+                    }
+                    
+                    this.hosts.get(event.host).get(logicalDateStr).push({
+                        time: timeStr,
+                        type: event.evt.trim(),
+                        fullTimestamp: event.at,
+                        originalHour: hour,
+                        displayHour: displayHour
+                    });
+                });
+                
+                // Si pas d'événements, utiliser une plage par défaut (5h à 5h du lendemain)
+                if (this.minHour === 24) {
+                    this.minHour = 5;
+                    this.maxHour = 29; // 5h du lendemain
+                }
+                
+                // S'assurer que la plage commence au minimum à 5h
+                this.minHour = Math.max(5, this.minHour);
+                
+                // Trier les événements par heure pour chaque host/jour
+                this.hosts.forEach(hostData => {
+                    hostData.forEach(dayEvents => {
+                        dayEvents.sort((a, b) => a.displayHour - b.displayHour || a.time.localeCompare(b.time));
+                    });
+                });
+            }
+            
+            generateTimeSegments(events, logicalDate) {
+                const segments = [];
+                const anomalies = [];
+                let currentState = 'off';
+                let segmentStart = null;
+                const today = new Date().toISOString().split('T')[0];
+                const isToday = logicalDate === today;
+                
+                // Si le premier événement est "off", créer un segment depuis 5h du matin
+                if (events.length > 0 && events[0].type === 'off') {
+                    segments.push({
+                        start: '05:00:00',
+                        end: events[0].time,
+                        startTimestamp: null,
+                        endTimestamp: events[0].fullTimestamp,
+                        displayStart: 5,
+                        displayEnd: events[0].displayHour
+                    });
+                }
+                
+                events.forEach((event, index) => {
+                    if (event.type === 'on') {
+                        if (currentState === 'on') {
+                            // Anomalie: deux "on" consécutifs
+                            anomalies.push({
+                                time: event.time,
+                                type: 'duplicate_on',
+                                fullTimestamp: event.fullTimestamp,
+                                displayHour: event.displayHour
+                            });
+                        } else {
+                            currentState = 'on';
+                            segmentStart = event;
+                        }
+                    } else if (event.type === 'off') {
+                        if (currentState === 'off') {
+                            // Anomalie: deux "off" consécutifs
+                            anomalies.push({
+                                time: event.time,
+                                type: 'duplicate_off',
+                                fullTimestamp: event.fullTimestamp,
+                                displayHour: event.displayHour
+                            });
+                        } else {
+                            if (segmentStart) {
+                                segments.push({
+                                    start: segmentStart.time,
+                                    end: event.time,
+                                    startTimestamp: segmentStart.fullTimestamp,
+                                    endTimestamp: event.fullTimestamp,
+                                    displayStart: segmentStart.displayHour,
+                                    displayEnd: event.displayHour
+                                });
+                            }
+                            currentState = 'off';
+                            segmentStart = null;
+                        }
+                    }
+                });
+                
+                // Si on termine sur un état "on", créer un segment jusqu'à maintenant (si aujourd'hui) ou 5h du lendemain
+                if (currentState === 'on' && segmentStart) {
+                    let endTime, endDisplay;
+                    if (isToday) {
+                        const now = new Date();
+                        endTime = now.toTimeString().split(' ')[0];
+                        endDisplay = now.getHours() + now.getMinutes() / 60;
+                    } else {
+                        endTime = '05:00:00';
+                        endDisplay = 29; // 5h du lendemain dans notre système d'affichage
+                    }
+                    
+                    segments.push({
+                        start: segmentStart.time,
+                        end: endTime,
+                        startTimestamp: segmentStart.fullTimestamp,
+                        endTimestamp: null,
+                        displayStart: segmentStart.displayHour,
+                        displayEnd: endDisplay
+                    });
+                }
+                return { segments, anomalies };
+            }
+            
+            timeToPosition(timeStr, width, displayHour = null) {
+                if (displayHour !== null) {
+                    // Utiliser directement displayHour pour le positionnement
+                    const minDisplay = this.minHour;
+                    const maxDisplay = this.maxHour;
+                    const range = maxDisplay - minDisplay;
+                    return ((displayHour - minDisplay) / range) * width;
+                } else {
+                    // Méthode de fallback pour la compatibilité
+                    const [hours, minutes, seconds] = timeStr.split(':');
+                    let displayHour = parseInt(hours);
+                    if (displayHour < 5) displayHour += 24;
+                    
+                    const totalSeconds = displayHour * 3600 + parseInt(minutes) * 60 + parseFloat(seconds || 0);
+                    const minSeconds = this.minHour * 3600;
+                    const maxSeconds = this.maxHour * 3600;
+                    const rangeSeconds = maxSeconds - minSeconds;
+                    return ((totalSeconds - minSeconds) / rangeSeconds) * width;
+                }
+            }
+            
+            renderTimeline() {
+                const container = document.getElementById('timeline');
+                container.innerHTML = '';
+                
+                if (this.hosts.size === 0) {
+                    container.innerHTML = '<p class="text-center text-muted">Aucune donnée disponible pour cette période</p>';
+                    return;
+                }
+                
+                // Calculer les dimensions
+                this.width = document.body.clientWidth - 10;
+                const rowHeight = 10; // Hauteur réduite pour les lignes
+                const daySpacing = 5; // Espace entre les groupes de jours
+                const hostCount = this.hosts.size;
+                
+                // Obtenir toutes les dates uniques
+                const allDates = new Set();
+                this.hosts.forEach(hostData => {
+                    hostData.forEach((_, date) => allDates.add(date));
+                });
+                const dates = Array.from(allDates).sort();
+                
+                this.height = dates.length * (hostCount * rowHeight + daySpacing + 20) + this.margin.top + this.margin.bottom;
+                
+                // Créer le SVG
+                this.svg = d3.select(container)
+                    .append('svg')
+                    .attr('width', this.width)
+                    .attr('height', this.height);
+                
+                const g = this.svg.append('g')
+                    .attr('transform', `translate(${this.margin.left},${this.margin.top})`);
+                
+                // Échelle pour les heures (basée sur la plage min/max)
+                const timeScale = d3.scaleLinear()
+                    .domain([this.minHour * 3600, (this.maxHour + 1) * 3600])
+                    .range([0, this.width]);
+                
+                // Créer les ticks d'heures dynamiquement
+                const hourRange = this.maxHour - this.minHour;
+                let tickInterval = 1; // Par défaut, chaque heure
+                // if (hourRange > 12) tickInterval = 2;
+                // if (hourRange > 20) tickInterval = 4;
+                
+                const tickValues = [];
+                for (let h = this.minHour; h <= this.maxHour; h += tickInterval) {
+                    tickValues.push(h * 3600);
+                }
+                
+                // Axe des heures (en haut)
+                const timeAxis = d3.axisTop(timeScale)
+                    .tickValues(tickValues)
+                    .tickFormat(d => {
+                        const hours = Math.floor(d / 3600);
+                        const displayHours = hours > 23 ? hours - 24 : hours;
+                        return `${displayHours.toString().padStart(2, '0')}h`;
+                    });
+                
+                g.append('g')
+                    .attr('class', 'time-axis')
+                    .call(timeAxis);
+                
+                // Lignes de grille verticales
+                g.selectAll('.grid-line')
+                    .data(tickValues)
+                    .enter()
+                    .append('line')
+                    .attr('class', 'grid-line')
+                    .attr('x1', d => timeScale(d))
+                    .attr('x2', d => timeScale(d))
+                    .attr('y1', 0)
+                    .attr('y2', dates.length * (hostCount * rowHeight + daySpacing + 20) - daySpacing)
+                    .style('stroke', '#e9ecef')
+                    .style('stroke-width', 1);
+                
+                // Dessiner les données pour chaque date et host
+                const hostNames = Array.from(this.hosts.keys()).sort();
+                let currentY = 0;
+                
+                dates.forEach((date, dateIndex) => {
+                    // En-tête de date
+                    const dayGroupHeight = hostCount * rowHeight;
+                    g.append('line')
+                    .attr('class', 'day-header-line')
+                    .attr('x1', 0)
+                    .attr('x2', this.width)
+                    .attr('y1', currentY)
+                    .attr('y2', currentY);
+                    
+                    g.append('text')
+                        .attr('class', 'day-header')
+                        .attr('x', 0)
+                        .attr('y', currentY + 15)
+                        .attr('text-anchor', 'left')
+                        .style('font-size', '13px')
+                        .style('font-weight', '600')
+                        .style('fill', '#495057')
+                        .text(new Date(date).toLocaleDateString('fr-FR', { 
+                            weekday: 'short', 
+                            day: 'numeric', 
+                            month: 'short' 
+                        }));
+                    currentY += 20;
+                    
+                    hostNames.forEach((hostName, hostIndex) => {
+                        const y = currentY + hostIndex * rowHeight + rowHeight / 2;
+                        const events = this.hosts.get(hostName)?.get(date) || [];
+                        
+                        if (events.length > 0) {
+                            const { segments, anomalies } = this.generateTimeSegments(events, date);
+                            
+                            // Dessiner les segments actifs
+                            segments.forEach(segment => {
+                                console.log(segment);
+                                const startPos = this.timeToPosition(segment.start, this.width, segment.displayStart);
+                                const endPos = this.timeToPosition(segment.end, this.width, segment.displayEnd);
+                                
+                                g.append('line')
+                                    .attr('class', 'host-line')
+                                    .attr('x1', startPos)
+                                    .attr('x2', endPos)
+                                    .attr('y1', y)
+                                    .attr('y2', y)
+                                    .style('stroke', this.colors(hostName))
+                                    .style('cursor', 'pointer')
+                                    .on('mouseover', (event) => {
+                                        this.showTooltip(event, {
+                                            host: hostName,
+                                            date: date,
+                                            start: segment.startTimestamp,
+                                            end: segment.endTimestamp,
+                                            type: 'segment'
+                                        });
+                                    })
+                                    .on('mouseout', () => {
+                                        this.hideTooltip();
+                                    });
+                            });
+                            
+                            // Dessiner les anomalies
+                            anomalies.forEach(anomaly => {
+                                const pos = this.timeToPosition(anomaly.time, this.width, anomaly.displayHour);
+                                
+                                g.append('circle')
+                                    .attr('class', 'anomaly')
+                                    .attr('cx', pos)
+                                    .attr('cy', y)
+                                    .attr('r', 3)
+                                    .style('cursor', 'pointer')
+                                    .on('mouseover', (event) => {
+                                        this.showTooltip(event, {
+                                            host: hostName,
+                                            date: date,
+                                            time: anomaly.fullTimestamp,
+                                            type: 'anomaly',
+                                            anomalyType: anomaly.type
+                                        });
+                                    })
+                                    .on('mouseout', () => {
+                                        this.hideTooltip();
+                                    });
+                            });
+                        }
+                    });
+                    
+                    currentY += dayGroupHeight + daySpacing;
+                });
+
+                this.renderLegend();
+            }
+            
+            renderLegend() {
+                const legendContainer = document.getElementById('legend');
+                legendContainer.innerHTML = '';
+                
+                const hostNames = Array.from(this.hosts.keys()).sort();
+                
+                hostNames.forEach(hostName => {
+                    const legendItem = document.createElement('div');
+                    legendItem.className = 'legend-item';
+                    
+                    const colorBox = document.createElement('div');
+                    colorBox.className = 'legend-color';
+                    colorBox.style.backgroundColor = this.colors(hostName);
+                    
+                    const label = document.createElement('span');
+                    label.textContent = hostName;
+                    
+                    legendItem.appendChild(colorBox);
+                    legendItem.appendChild(label);
+                    legendContainer.appendChild(legendItem);
+                });
+            }
+            
+            showTooltip(event, data) {
+                let content = `<strong>${data.host}</strong><br>`;
+                content += `Date: ${new Date(data.date).toLocaleDateString('fr-FR')}<br>`;
+                
+                if (data.type === 'segment') {
+                    content += `Début: ${data.start ? new Date(data.start).toLocaleTimeString('fr-FR') : 'N/A'}<br>`;
+                    content += `Fin: ${data.end ? new Date(data.end).toLocaleTimeString('fr-FR') : 'En cours'}`;
+                } else if (data.type === 'anomaly') {
+                    content += `Heure: ${new Date(data.time).toLocaleTimeString('fr-FR')}<br>`;
+                    content += `Anomalie: ${data.anomalyType === 'duplicate_on' ? 'Double ON' : 'Double OFF'}`;
+                }
+                
+                this.tooltip
+                    .html(content)
+                    .style('opacity', 1)
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px');
+            }
+            
+            hideTooltip() {
+                this.tooltip.style('opacity', 0);
+            }
+            
+            showLoading() {
+                document.getElementById('loading').classList.remove('d-none');
+                document.getElementById('error').classList.add('d-none');
+                document.getElementById('legend').classList.add('d-none');
+                document.getElementById('timeline').classList.add('d-none');
+            }
+            
+            showError() {
+                document.getElementById('loading').classList.add('d-none');
+                document.getElementById('error').classList.remove('d-none');
+                document.getElementById('legend').classList.add('d-none');
+                document.getElementById('timeline').classList.add('d-none');
+            }
+            
+            showTimeline() {
+                document.getElementById('loading').classList.add('d-none');
+                document.getElementById('error').classList.add('d-none');
+                document.getElementById('legend').classList.remove('d-none');
+                document.getElementById('timeline').classList.remove('d-none');
+            }
+        }
+        
+        // Initialiser l'application
+        document.addEventListener('DOMContentLoaded', () => {
+            new UptimeMonitor();
+        });
+    </script>
+</body>
+</html>
