@@ -1,9 +1,9 @@
-# Script d'installation du service Windows Monitor
+# Script d'installation du service Uptime Monitor
 # Exécuter en tant qu'administrateur
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$InstallPath = "C:\Program Files\WindowsMonitor",
+    [string]$InstallPath = "C:\Program Files\UptimeMonitor",
     
     [Parameter(Mandatory=$false)]
     [switch]$Uninstall = $false,
@@ -19,8 +19,8 @@ if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
     exit 1
 }
 
-$ServiceName = "WindowsMonitorService"
-$ExecutableName = "windows-monitor.exe"
+$ServiceName = "UptimeMonitorService"
+$ExecutableName = "uptime-monitor.exe"
 $ConfigName = "config.json"
 
 function Test-ServiceExists {
@@ -50,8 +50,8 @@ function Get-ScriptDirectory {
     }
 }
 
-function Uninstall-WindowsMonitor {
-    Write-Host "=== Désinstallation du Windows Monitor ===" -ForegroundColor Yellow
+function Uninstall-UptimeMonitor {
+    Write-Host "=== Désinstallation du service Uptime Monitor ===" -ForegroundColor Yellow
     
     # Arrêter le service s'il fonctionne
     Stop-ServiceIfRunning -ServiceName $ServiceName
@@ -89,8 +89,8 @@ function Uninstall-WindowsMonitor {
     Write-Host "Désinstallation terminée" -ForegroundColor Green
 }
 
-function Install-WindowsMonitor {
-    Write-Host "=== Installation du Windows Monitor ===" -ForegroundColor Green
+function Install-UptimeMonitor {
+    Write-Host "=== Installation du service Uptime Monitor ===" -ForegroundColor Green
     
     # Créer le répertoire d'installation
     if (-not (Test-Path $InstallPath)) {
@@ -175,21 +175,21 @@ function Install-WindowsMonitor {
 # Exécution principale
 try {
     if ($Uninstall) {
-        Uninstall-WindowsMonitor
+        Uninstall-UptimeMonitor
     } else {
         # Vérifier si le service existe déjà
         if (Test-ServiceExists -ServiceName $ServiceName) {
             Write-Host "Le service $ServiceName existe déjà." -ForegroundColor Yellow
             $response = Read-Host "Voulez-vous le réinstaller ? (y/N)"
             if ($response -eq "y" -or $response -eq "Y") {
-                Uninstall-WindowsMonitor
+                Uninstall-UptimeMonitor
                 Start-Sleep -Seconds 2
-                Install-WindowsMonitor
+                Install-UptimeMonitor
             } else {
                 Write-Host "Installation annulée" -ForegroundColor Yellow
             }
         } else {
-            Install-WindowsMonitor
+            Install-UptimeMonitor
         }
     }
 } catch {

@@ -38,7 +38,7 @@ if ($Release) {
 }
 
 # Nom de l'exécutable
-$executableName = "windows-monitor.exe"
+$executableName = "uptime-monitor.exe"
 $outputPath = Join-Path $OutputDir $executableName
 
 Write-Host "Compilation en cours..." -ForegroundColor Yellow
